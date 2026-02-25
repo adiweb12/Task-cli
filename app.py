@@ -12,20 +12,20 @@ from email.mime.multipart import MIMEMultipart
 
 app = Flask(__name__)
 
-# Configuration
-# Render provides the database URL via the DATABASE_URL environment variable.
-# We replace 'postgres://' with 'postgresql://' for SQLAlchemy 1.4+ compatibility.
+# ──────────────── Configuration ────────────────
+
+# Fix for Render's DATABASE_URL (PostgreSQL)
 database_url = os.environ.get('DATABASE_URL', 'sqlite:///onechat.db')
 if database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'your-super-secret-jwt-key-change-in-production')
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'your-super-secret-jwt-key')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=30)
 
-# Gmail SMTP config - update with your credentials
-SMTP_EMAIL = os.environ.get('MAIL_USERNAMD', 'your-gmail@gmail.com')
+# Gmail SMTP config
+SMTP_EMAIL = os.environ.get('MAIL_USERNAME', 'your-gmail@gmail.com')
 SMTP_PASSWORD = os.environ.get('MAIL_PASSWORD', 'your-app-password')
 
 db = SQLAlchemy(app)
@@ -134,13 +134,8 @@ def signup():
     db.session.add(user)
     db.session.commit()
 
-    email_sent = send_otp_email(email, otp)
-    if not email_sent:
-        # Still succeed but warn - useful during dev
-        print(f"[DEV] OTP for {email}: {otp}")
-
+    send_otp_email(email, otp)
     return jsonify({'success': True, 'message': 'OTP sent to your email'})
-
 
 @app.route('/auth/verify-otp', methods=['POST'])
 def verify_otp():
@@ -149,13 +144,7 @@ def verify_otp():
     otp = data.get('otp', '').strip()
 
     user = User.query.filter_by(email=email).first()
-    if not user:
-        return jsonify({'success': False, 'message': 'User not found'}), 404
-
-    if user.is_verified:
-        return jsonify({'success': True, 'message': 'Already verified'})
-
-    if user.otp != otp:
+    if not user or user.otp != otp:
         return jsonify({'success': False, 'message': 'Invalid OTP'}), 400
 
     if datetime.utcnow() > user.otp_expires:
@@ -164,9 +153,7 @@ def verify_otp():
     user.is_verified = True
     user.otp = None
     db.session.commit()
-
     return jsonify({'success': True, 'message': 'Email verified successfully'})
-
 
 @app.route('/auth/login', methods=['POST'])
 def login():
@@ -175,10 +162,7 @@ def login():
     password = data.get('password', '')
 
     user = User.query.filter_by(email=email).first()
-    if not user:
-        return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
-
-    if not check_password_hash(user.password_hash, password):
+    if not user or not check_password_hash(user.password_hash, password):
         return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
 
     if not user.is_verified:
@@ -190,7 +174,6 @@ def login():
         'token': token,
         'user_id': user.id,
         'name': user.name,
-        'phone': user.phone,
     })
 
 # ──────────────── Chat Routes ────────────────
@@ -199,15 +182,10 @@ def login():
 @jwt_required()
 def chat_list():
     me = int(get_jwt_identity())
-    
-    # Get unique conversation partners
     sent = db.session.query(Message.receiver_id).filter_by(sender_id=me, is_deleted=False).distinct()
     recv = db.session.query(Message.sender_id).filter_by(receiver_id=me, is_deleted=False).distinct()
     
-    partner_ids = set()
-    for r in sent: partner_ids.add(r[0])
-    for r in recv: partner_ids.add(r[0])
-
+    partner_ids = {r[0] for r in sent}.union({r[0] for r in recv})
     chats = []
     for pid in partner_ids:
         partner = User.query.get(pid)
@@ -218,20 +196,13 @@ def chat_list():
             Message.is_deleted == False
         ).order_by(Message.timestamp.desc()).first()
         
-        unread = Message.query.filter_by(sender_id=pid, receiver_id=me, is_read=False, is_deleted=False).count()
-        
         chats.append({
             'user_id': pid,
             'name': partner.name,
-            'phone': partner.phone,
             'last_message': last_msg.content if last_msg else '',
             'last_time': last_msg.timestamp.isoformat() if last_msg else datetime.utcnow().isoformat(),
-            'unread_count': unread,
         })
-
-    chats.sort(key=lambda c: c['last_time'], reverse=True)
     return jsonify({'success': True, 'chats': chats})
-
 
 @app.route('/chat/messages/<int:other_id>', methods=['GET'])
 @jwt_required()
@@ -242,111 +213,29 @@ def get_messages(other_id):
         ((Message.sender_id == other_id) & (Message.receiver_id == me)),
         Message.is_deleted == False
     ).order_by(Message.timestamp.asc()).all()
-
-    # Mark as read
-    Message.query.filter_by(sender_id=other_id, receiver_id=me, is_read=False).update({'is_read': True})
-    db.session.commit()
-
     return jsonify({'success': True, 'messages': [format_message(m) for m in messages]})
-
 
 @app.route('/chat/send', methods=['POST'])
 @jwt_required()
 def send_message():
     me = int(get_jwt_identity())
     data = request.get_json()
-    receiver_id = data.get('receiver_id')
-    content = data.get('content', '').strip()
-
-    if not receiver_id or not content:
-        return jsonify({'success': False, 'message': 'receiver_id and content required'}), 400
-
-    msg = Message(sender_id=me, receiver_id=int(receiver_id), content=content)
+    msg = Message(sender_id=me, receiver_id=int(data.get('receiver_id')), content=data.get('content'))
     db.session.add(msg)
     db.session.commit()
     return jsonify({'success': True, 'message': format_message(msg)})
 
+# ──────────────── Initialization ────────────────
 
-@app.route('/chat/clear/<int:other_id>', methods=['DELETE'])
-@jwt_required()
-def clear_chat(other_id):
-    me = int(get_jwt_identity())
-    Message.query.filter(
-        ((Message.sender_id == me) & (Message.receiver_id == other_id)) |
-        ((Message.sender_id == other_id) & (Message.receiver_id == me))
-    ).update({'is_deleted': True})
-    db.session.commit()
-    return jsonify({'success': True})
-
-
-@app.route('/chat/delete/<int:other_id>', methods=['DELETE'])
-@jwt_required()
-def delete_chat(other_id):
-    me = int(get_jwt_identity())
-    Message.query.filter(
-        ((Message.sender_id == me) & (Message.receiver_id == other_id)) |
-        ((Message.sender_id == other_id) & (Message.receiver_id == me))
-    ).update({'is_deleted': True})
-    db.session.commit()
-    return jsonify({'success': True})
-
-# ──────────────── Contacts Routes ────────────────
-
-@app.route('/contacts/check', methods=['POST'])
-@jwt_required()
-def check_contacts():
-    data = request.get_json()
-    phones = data.get('phones', [])
-    
-    result = []
-    for phone in phones:
-        # Normalize: last 10 digits
-        clean = ''.join(filter(str.isdigit, phone))[-10:]
-        user = User.query.filter(User.phone.like(f'%{clean}')).filter_by(is_verified=True).first()
-        if user:
-            result.append({
-                'phone': phone,
-                'user_id': user.id,
-                'name': user.name,
-                'has_account': True,
-            })
-    
-    return jsonify({'success': True, 'contacts': result})
-
-# ──────────────── Group Routes ────────────────
-
-@app.route('/group/create', methods=['POST'])
-@jwt_required()
-def create_group():
-    me = int(get_jwt_identity())
-    data = request.get_json()
-    name = data.get('name', '').strip()
-    members = data.get('members', [])
-
-    if not name:
-        return jsonify({'success': False, 'message': 'Group name required'}), 400
-
-    group = Group(name=name, creator_id=me)
-    db.session.add(group)
-    db.session.flush()
-
-    # Add creator + members
-    db.session.add(GroupMember(group_id=group.id, user_id=me))
-    for member_id in members:
-        db.session.add(GroupMember(group_id=group.id, user_id=int(member_id)))
-
-    db.session.commit()
-    return jsonify({'success': True, 'group_id': group.id, 'name': group.name})
-
-# ──────────────── Health ────────────────
+# This runs on BOTH Gunicorn (Render) and local Python
+# It ensures the PostgreSQL tables exist before the first request
+with app.app_context():
+    db.create_all()
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'ok', 'app': 'OneChat'})
+    return jsonify({'status': 'ok'})
 
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    # Port is dynamically assigned by Render, but default to 5000 for local dev
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=True)
