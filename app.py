@@ -119,6 +119,35 @@ def signup_request():
 
     return jsonify({"message": "OTP sent successfully"}), 200
 
+# ----------------- LOGIN -----------------------
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.get_json()
+
+    email = data.get("email")
+    password = data.get("password")
+
+    if not email or not password:
+        return jsonify({"message": "Missing fields"}), 400
+
+    user = User.query.filter_by(email=email).first()
+
+    if not user:
+        return jsonify({"message": "User not found"}), 404
+
+    # 🔒 Must be verified before login
+    if not user.is_verified:
+        return jsonify({"message": "Please verify your email first"}), 403
+
+    # 🔐 Check password
+    if not bcrypt.check_password_hash(user.password, password):
+        return jsonify({"message": "Invalid credentials"}), 401
+
+    return jsonify({
+        "message": "Login successful",
+        "email": user.email
+    }), 200
+
 
 # ----------------- VERIFY OTP -----------------------
 @app.route("/verify-otp", methods=["POST"])
