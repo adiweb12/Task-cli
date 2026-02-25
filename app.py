@@ -17,13 +17,21 @@ CORS(app)
 # ----------------------------
 # DATABASE CONFIG
 # ----------------------------
+
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL + "?sslmode=require"
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+    "connect_args": {
+        "sslmode": "require"
+    }
+}
 
 db.init_app(app)
 bcrypt = Bcrypt(app)
