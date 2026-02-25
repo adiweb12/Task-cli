@@ -123,7 +123,7 @@ def signup_request():
 
     db.session.commit()
 
-    send_otp_email(email, otp)
+    print("OTP:", otp)
 
     return jsonify({"message": "OTP sent successfully"}), 200
 
