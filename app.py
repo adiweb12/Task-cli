@@ -1,75 +1,91 @@
 import os
 from flask import Flask, request, jsonify
-from flask_cors import CORS
 from flask_bcrypt import Bcrypt
-from flask_sqlalchemy import SQLAlchemy
+from models import db, User
 from dotenv import load_dotenv
 
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app)
-
-# PostgreSQL database (Render auto-provides DATABASE_URL)
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get("DATABASE_URL")
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-db = SQLAlchemy(app)
 bcrypt = Bcrypt(app)
 
-# --------------------
-# User Model
-# --------------------
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password = db.Column(db.String(255), nullable=False)
+# =============================
+# DATABASE CONFIG
+# =============================
 
-# --------------------
-# Routes
-# --------------------
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+db.init_app(app)
+
+# =============================
+# CREATE TABLES ON START
+# =============================
+
+with app.app_context():
+    db.create_all()
+
+# =============================
+# ROUTES
+# =============================
 
 @app.route("/")
 def home():
-    return jsonify({"status": "Server Running ✅"})
+    return "OTT Backend Running"
 
-# SIGNUP
+# ---------- SIGNUP ----------
 @app.route("/signup", methods=["POST"])
 def signup():
     data = request.get_json()
 
-    if not data or not data.get("email") or not data.get("password"):
-        return jsonify({"message": "Missing fields"}), 400
+    email = data.get("email")
+    password = data.get("password")
 
-    existing_user = User.query.filter_by(email=data["email"]).first()
+    if not email or not password:
+        return jsonify({"error": "Missing fields"}), 400
+
+    existing_user = User.query.filter_by(email=email).first()
     if existing_user:
-        return jsonify({"message": "User already exists"}), 409
+        return jsonify({"error": "User already exists"}), 400
 
-    hashed_pw = bcrypt.generate_password_hash(data["password"]).decode("utf-8")
+    hashed_password = bcrypt.generate_password_hash(password).decode("utf-8")
 
-    new_user = User(email=data["email"], password=hashed_pw)
+    new_user = User(email=email, password=hashed_password)
+
     db.session.add(new_user)
     db.session.commit()
 
     return jsonify({"message": "User created successfully"}), 201
 
-# LOGIN
+
+# ---------- LOGIN ----------
 @app.route("/login", methods=["POST"])
 def login():
     data = request.get_json()
 
-    if not data or not data.get("email") or not data.get("password"):
-        return jsonify({"message": "Missing fields"}), 400
+    email = data.get("email")
+    password = data.get("password")
 
-    user = User.query.filter_by(email=data["email"]).first()
+    user = User.query.filter_by(email=email).first()
 
-    if user and bcrypt.check_password_hash(user.password, data["password"]):
-        return jsonify({"message": "Login successful"}), 200
+    if user and bcrypt.check_password_hash(user.password, password):
+        return jsonify({
+            "message": "Login successful",
+            "user_id": user.id,
+            "email": user.email
+        }), 200
 
-    return jsonify({"message": "Invalid credentials"}), 401
+    return jsonify({"error": "Invalid credentials"}), 401
 
+
+# =============================
+# RUN
+# =============================
 
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
-    app.run()
+    app.run(debug=True)
