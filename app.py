@@ -21,6 +21,14 @@ if database_url.startswith("postgres://"):
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# This fix prevents the "SSL error: decryption failed" by validating connections 
+# and recycling them before they go stale or conflict between Gunicorn workers.
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+}
+
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'your-super-secret-jwt-key')
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=30)
 
@@ -227,8 +235,6 @@ def send_message():
 
 # ──────────────── Initialization ────────────────
 
-# This runs on BOTH Gunicorn (Render) and local Python
-# It ensures the PostgreSQL tables exist before the first request
 with app.app_context():
     db.create_all()
 
@@ -238,4 +244,4 @@ def health():
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
+    app.run(host='0.0.0.0', port=port)
