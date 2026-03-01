@@ -1,4 +1,4 @@
-import os
+Import os
 from datetime import timedelta
 from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
@@ -149,6 +149,75 @@ def login():
     }), 200
 
 # ==============================
+# UPDATE EMAIL
+# ==============================
+
+@app.route("/onechat/update-email", methods=["PUT"])
+@jwt_required()
+def update_email():
+    current_user_id = get_jwt_identity()
+    data = request.get_json(force=True)
+
+    phoneNumber = data.get("phoneNumber")
+    new_email = data.get("newEmail")
+
+    if not phoneNumber or not new_email:
+        return jsonify({"error": "Phone number and new email required"}), 400
+
+    user = User.query.get(current_user_id)
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    # Verify phone matches logged in user
+    if user.phoneNumber != phoneNumber:
+        return jsonify({"error": "Phone number does not match"}), 403
+
+    # Check if email already taken
+    if User.query.filter_by(email=new_email).first():
+        return jsonify({"error": "Email already in use"}), 409
+
+    user.email = new_email
+    db.session.commit()
+
+    return jsonify({"message": "Email updated successfully"}), 200
+    
+# ==============================
+# UPDATE PASSWORD
+# ==============================
+
+@app.route("/onechat/update-password", methods=["PUT"])
+@jwt_required()
+def update_password():
+    current_user_id = get_jwt_identity()
+    data = request.get_json(force=True)
+
+    email = data.get("email")
+    new_password = data.get("newPassword")
+
+    if not email or not new_password:
+        return jsonify({"error": "Email and new password required"}), 400
+
+    if not validate_password(new_password):
+        return jsonify({"error": "Weak password"}), 400
+
+    user = User.query.get(current_user_id)
+
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+
+    # Verify email matches logged in user
+    if user.email != email:
+        return jsonify({"error": "Email does not match"}), 403
+
+    hashed_password = generate_password_hash(new_password)
+    user.password = hashed_password
+    db.session.commit()
+
+    return jsonify({"message": "Password updated successfully"}), 200
+
+
+# ==============================
 # REFRESH TOKEN
 # ==============================
 
@@ -175,3 +244,4 @@ def protected():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
+
