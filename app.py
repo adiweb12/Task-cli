@@ -7,6 +7,7 @@ from flask_jwt_extended import (
     create_refresh_token, jwt_required,
     get_jwt_identity
 )
+from flask_socketio import SocketIO, emit, join_room
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -21,6 +22,12 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+
+#===============================
+# SocketIO CONFIGURATION
+#===============================
+
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # ==============================
 # CONFIGURATION
@@ -251,6 +258,26 @@ def profile():
         "phoneNumber": user.phoneNumber,
         "dob": user.dob
     }), 200
+    
+#===================
+# Join 
+#===================
+
+@socketio.on('join')
+def on_join(data):
+    # User joins a room named after their own phone number or group ID
+    room = data['room']
+    join_room(room)
+    
+#===================
+# Send Messages 
+#===================
+
+@socketio.on('send_message')
+def handle_message(data):
+    # data contains: sender_phone, receiver_id (phone or group_id), message, is_group
+    receiver = data['receiver_id']
+    emit('receive_message', data, room=receiver)
 
 
 # ==============================
@@ -258,4 +285,4 @@ def profile():
 # ==============================
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    socketio.run(app, host="0.0.0.0", port=5000)
