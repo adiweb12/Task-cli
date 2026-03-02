@@ -1,6 +1,8 @@
 Flask==3.0.2
 Flask-SQLAlchemy==3.1.1
 Flask-JWT-Extended==4.6.0
+Flask-SocketIO
+eventlet
 Flask-Limiter==3.5.0
 Flask-Cors==4.0.0
 python-dotenv==1.0.1
