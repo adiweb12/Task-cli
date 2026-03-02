@@ -216,6 +216,50 @@ def update_password():
 
     return jsonify({"message": "Password updated successfully"}), 200
 
+# ==============================
+# SYNC CONTACTS (SAFE)
+# ==============================
+
+@app.route("/onechat/sync-contacts", methods=["POST"])
+@jwt_required()
+def sync_contacts():
+    current_user_id = get_jwt_identity()
+    data = request.get_json(force=True)
+
+    phone_numbers = data.get("contacts", [])
+
+    if not isinstance(phone_numbers, list):
+        return jsonify({"error": "Contacts must be a list"}), 400
+
+    if not phone_numbers:
+        return jsonify({"matched_users": []}), 200
+
+    # Prevent abuse
+    if len(phone_numbers) > 1000:
+        return jsonify({"error": "Too many contacts"}), 400
+
+    # Normalize numbers (important)
+    cleaned_numbers = [
+        p.replace(" ", "").replace("-", "").strip()
+        for p in phone_numbers
+    ]
+
+    matched_users = User.query.filter(
+        User.phoneNumber.in_(cleaned_numbers),
+        User.id != current_user_id
+    ).all()
+
+    result = [
+        {
+            "id": user.id,
+            "userName": user.userName,
+            "phoneNumber": user.phoneNumber
+        }
+        for user in matched_users
+    ]
+
+    return jsonify({"matched_users": result}), 200
+
 
 # ==============================
 # REFRESH TOKEN
